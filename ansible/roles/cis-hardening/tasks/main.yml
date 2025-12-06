@@ -1,0 +1,20 @@
+- name: Disable unused filesystems (CIS 1.1.1)
+  lineinfile:
+    path: /etc/modprobe.d/CIS.conf
+    line: "install {{ item }} /bin/true"
+    create: yes
+  loop:
+    - cramfs
+    - freevxfs
+    - jffs2
+    - hfs
+    - hfsplus
+    - squashfs
+    - udf
+
+- name: Ensure SSH PermitRootLogin is disabled (CIS 5.2.8)
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^PermitRootLogin'
+    line: 'PermitRootLogin no'
+  notify: restart sshd

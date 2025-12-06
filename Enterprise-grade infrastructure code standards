@@ -1,0 +1,759 @@
+# Contributing to Leadway K8s Platform
+
+> **Enterprise-grade infrastructure code standards for the ECP team**
+
+Thank you for contributing to the Leadway Bank Enterprise Cloud Platform! This guide ensures consistency, quality, and security across our infrastructure codebase.
+
+---
+
+## 📋 Table of Contents
+
+- [Quick Start](#quick-start)
+- [Development Workflow](#development-workflow)
+- [Code Standards](#code-standards)
+  - [Terraform](#terraform-standards)
+  - [Ansible](#ansible-standards)
+  - [Kubernetes Manifests](#kubernetes-manifest-standards)
+  - [Helm Charts](#helm-chart-standards)
+- [Testing Requirements](#testing-requirements)
+- [Security & Compliance](#security--compliance)
+- [Review Process](#review-process)
+- [Troubleshooting](#troubleshooting)
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+```bash
+# Required tools
+terraform >= 1.6.0
+kubectl >= 1.29.0
+helm >= 3.12.0
+ansible >= 2.15.0
+pre-commit >= 3.5.0
+
+# Install development dependencies
+make install-dev-tools
+
+# Install pre-commit hooks
+pre-commit install
+```
+
+### Your First Contribution
+
+```bash
+# 1. Create feature branch
+git checkout -b feature/new-karpenter-nodepool
+
+# 2. Make changes
+vim terraform/modules/karpenter/nodepool-batch.yaml
+
+# 3. Run local validation
+make validate
+make test
+
+# 4. Commit with conventional commits
+git commit -m "feat(karpenter): add batch processing nodepool"
+
+# 5. Push and open PR
+git push origin feature/new-karpenter-nodepool
+```
+
+---
+
+## 🔄 Development Workflow
+
+### Branch Strategy
+
+```
+main
+  ├── develop (integration branch)
+  │   ├── feature/eks-upgrade-1.30
+  │   ├── feature/gpu-factory-phase1
+  │   └── fix/karpenter-consolidation-bug
+  └── hotfix/security-patch-cve-2024-xxxx
+```
+
+**Branch Naming Convention**:
+- `feature/` - New features or enhancements
+- `fix/` - Bug fixes
+- `hotfix/` - Urgent production fixes
+- `refactor/` - Code refactoring
+- `docs/` - Documentation updates
+
+### Commit Message Format
+
+Follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>(<scope>): <subject>
+
+[optional body]
+
+[optional footer]
+```
+
+**Types**:
+- `feat` - New feature
+- `fix` - Bug fix
+- `docs` - Documentation
+- `refactor` - Code refactoring
+- `test` - Adding tests
+- `chore` - Maintenance tasks
+
+**Examples**:
+
+✅ Good:
+```
+feat(karpenter): add GPU nodepool for ML workloads
+
+- Implements g4dn and p3 instance families
+- Adds NVIDIA driver installation
+- Updates documentation with GPU scheduling guide
+
+Closes #123
+```
+
+✅ Good:
+```
+fix(eks): resolve IRSA role assumption timeout
+
+Increases timeout from 30s to 60s for large clusters.
+Tested in nonprod-use1 cluster.
+
+Fixes #456
+```
+
+❌ Bad:
+```
+updated karpenter stuff
+```
+
+---
+
+## 📝 Code Standards
+
+### Terraform Standards
+
+#### 1. File Organization
+
+```hcl
+# modules/<module-name>/
+# ├── main.tf          # Primary resources
+# ├── variables.tf     # Input variables
+# ├── outputs.tf       # Output values
+# ├── versions.tf      # Provider versions
+# ├── data.tf          # Data sources (optional)
+# ├── locals.tf        # Local values (optional)
+# └── README.md        # Documentation
+```
+
+#### 2. Naming Conventions
+
+```hcl
+# Resources: lowercase with underscores
+resource "aws_security_group" "eks_cluster" {
+  name = "${var.cluster_name}-cluster-sg"
+}
+
+# Variables: lowercase with underscores
+variable "cluster_name" {
+  type = string
+}
+
+# Locals: lowercase with underscores
+locals {
+  common_tags = {
+    ManagedBy   = "Terraform"
+    Environment = var.environment
+  }
+}
+```
+
+#### 3. Required Elements
+
+**All modules must include**:
+
+```hcl
+# versions.tf
+terraform {
+  required_version = ">= 1.6.0"
+  
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+# variables.tf - Always include validation
+variable "cluster_name" {
+  description = "Name of the EKS cluster"
+  type        = string
+  
+  validation {
+    condition     = can(regex("^[a-z0-9-]+$", var.cluster_name))
+    error_message = "Cluster name must contain only lowercase letters, numbers, and hyphens."
+  }
+}
+
+# main.tf - Always tag resources
+resource "aws_eks_cluster" "main" {
+  name = var.cluster_name
+  
+  tags = merge(
+    var.common_tags,
+    {
+      "Name"        = var.cluster_name
+      "ManagedBy"   = "Terraform"
+      "CostCenter"  = var.cost_center
+      "Environment" = var.environment
+    }
+  )
+}
+
+# outputs.tf - Always include descriptions
+output "cluster_endpoint" {
+  description = "Endpoint for EKS control plane"
+  value       = aws_eks_cluster.main.endpoint
+}
+```
+
+#### 4. Sensitive Data Handling
+
+```hcl
+# ✅ Good: Use AWS Secrets Manager
+data "aws_secretsmanager_secret_version" "db_password" {
+  secret_id = "prod/database/password"
+}
+
+# ❌ Bad: Hardcoded secrets
+variable "database_password" {
+  default = "SuperSecret123!"  # NEVER DO THIS
+}
+
+# Mark outputs as sensitive
+output "database_password" {
+  value     = data.aws_secretsmanager_secret_version.db_password.secret_string
+  sensitive = true
+}
+```
+
+#### 5. Cost Tagging (Mandatory)
+
+```hcl
+# ALL resources must have these tags
+locals {
+  required_tags = {
+    "CostCenter"         = var.cost_center          # Required: CC-XXXX format
+    "Environment"        = var.environment          # Required: prod/staging/nonprod
+    "ManagedBy"          = "Terraform"              # Required
+    "DataClassification" = var.data_classification  # Required: Public/Internal/Confidential/Restricted
+    "BackupPolicy"       = var.backup_policy        # Required: daily/weekly/none
+  }
+}
+```
+
+---
+
+### Ansible Standards
+
+#### 1. Role Structure
+
+```yaml
+# roles/<role-name>/
+# ├── tasks/
+# │   └── main.yml        # Primary tasks
+# ├── handlers/
+# │   └── main.yml        # Handlers
+# ├── defaults/
+# │   └── main.yml        # Default variables
+# ├── vars/
+# │   └── main.yml        # Role variables
+# ├── templates/
+# │   └── config.j2       # Jinja2 templates
+# ├── files/
+# ├── meta/
+# │   └── main.yml        # Role metadata
+# └── README.md
+```
+
+#### 2. Task Writing Standards
+
+```yaml
+# ✅ Good: Descriptive name, tags, check mode support
+- name: CIS 1.1.1 | Disable unused filesystems
+  copy:
+    dest: /etc/modprobe.d/cis.conf
+    content: |
+      install cramfs /bin/true
+    mode: '0644'
+    owner: root
+    group: root
+  tags:
+    - cis
+    - filesystem
+    - level1
+  check_mode: yes
+
+# ❌ Bad: No name, no tags, fails in check mode
+- copy:
+    dest: /etc/modprobe.d/cis.conf
+    content: "install cramfs /bin/true"
+```
+
+#### 3. Idempotency Requirements
+
+```yaml
+# ✅ Good: Idempotent (safe to run multiple times)
+- name: Ensure SSH is configured securely
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PermitRootLogin'
+    line: 'PermitRootLogin no'
+    validate: '/usr/sbin/sshd -t -f %s'
+  notify: restart sshd
+
+# ❌ Bad: Not idempotent (appends every run)
+- name: Configure SSH
+  shell: echo "PermitRootLogin no" >> /etc/ssh/sshd_config
+```
+
+#### 4. Variable Naming
+
+```yaml
+# defaults/main.yml
+---
+# Role-specific prefix
+cis_hardening_level: 2
+cis_disable_ipv6: true
+cis_enable_auditd: true
+
+# Global variables (from inventory)
+cluster_name: "{{ lookup('env', 'CLUSTER_NAME') }}"
+environment: "{{ lookup('env', 'ENVIRONMENT') }}"
+```
+
+---
+
+### Kubernetes Manifest Standards
+
+#### 1. YAML Formatting
+
+```yaml
+# ✅ Good: Consistent indentation (2 spaces), explicit types
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx
+  namespace: default
+  labels:
+    app: nginx
+    version: "1.25"
+    environment: prod
+spec:
+  containers:
+    - name: nginx
+      image: harbor.leadway-bank.com/apps/nginx:1.25
+      ports:
+        - containerPort: 80
+          name: http
+          protocol: TCP
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+
+# ❌ Bad: Inconsistent formatting, missing resources
+apiVersion: v1
+kind: Pod
+metadata:
+ name: nginx
+spec:
+ containers:
+ - name: nginx
+   image: nginx:latest  # Never use latest tag
+```
+
+#### 2. Required Labels (All Resources)
+
+```yaml
+metadata:
+  labels:
+    app.kubernetes.io/name: myapp
+    app.kubernetes.io/instance: myapp-prod
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: ecommerce
+    app.kubernetes.io/managed-by: argocd
+    # Custom labels for cost allocation
+    cost-center: CC-1234
+    team: platform-engineering
+    environment: prod
+```
+
+#### 3. Security Contexts (Mandatory)
+
+```yaml
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  
+  containers:
+    - name: app
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+            - ALL
+```
+
+---
+
+### Helm Chart Standards
+
+#### 1. Chart Structure
+
+```
+helm-charts/<chart-name>/
+├── Chart.yaml           # Chart metadata
+├── values.yaml          # Default values
+├── values-prod.yaml     # Production overrides
+├── values-staging.yaml  # Staging overrides
+├── templates/
+│   ├── _helpers.tpl     # Template helpers
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   ├── ingress.yaml
+│   ├── configmap.yaml
+│   └── NOTES.txt        # Post-install notes
+└── README.md
+```
+
+#### 2. Chart.yaml Requirements
+
+```yaml
+apiVersion: v2
+name: golden-app
+description: Golden application template for Leadway Bank
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+
+keywords:
+  - leadway
+  - golden-template
+  - banking
+
+maintainers:
+  - name: Platform Engineering Team
+    email: ecp-team@leadway-bank.com
+
+dependencies:
+  - name: postgresql
+    version: 12.x.x
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+```
+
+#### 3. values.yaml Best Practices
+
+```yaml
+# Organize values logically
+image:
+  repository: harbor.leadway-bank.com/apps/myapp
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+
+replicaCount: 3
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi
+
+# Feature flags
+features:
+  enableMetrics: true
+  enableTracing: false
+
+# Environment-specific
+environment: prod
+
+# Cost allocation
+costCenter: CC-1234
+```
+
+---
+
+## 🧪 Testing Requirements
+
+### Terraform Testing
+
+```bash
+# 1. Format check
+terraform fmt -check -recursive
+
+# 2. Validate syntax
+terraform validate
+
+# 3. Security scan
+tfsec .
+
+# 4. Cost estimation
+infracost breakdown --path .
+
+# 5. Plan (no apply)
+terraform plan -out=tfplan
+```
+
+**Required before PR approval**:
+- [ ] `terraform fmt` passes
+- [ ] `terraform validate` passes
+- [ ] `tfsec` scan has zero HIGH/CRITICAL findings
+- [ ] Cost impact documented (if >$100/month change)
+
+### Ansible Testing
+
+```bash
+# 1. Syntax check
+ansible-playbook playbooks/eks-node-hardening.yml --syntax-check
+
+# 2. Lint with ansible-lint
+ansible-lint playbooks/
+
+# 3. Molecule test (if role has tests)
+cd roles/cis-hardening
+molecule test
+
+# 4. Dry-run against nonprod
+ansible-playbook playbooks/eks-node-hardening.yml --check --diff
+```
+
+**Required before PR approval**:
+- [ ] `ansible-lint` passes
+- [ ] Molecule tests pass (if applicable)
+- [ ] Dry-run successful in nonprod environment
+
+### Kubernetes Manifest Testing
+
+```bash
+# 1. YAML validation
+yamllint kyverno-policies/
+
+# 2. Dry-run apply
+kubectl apply -f kyverno-policies/ --dry-run=server
+
+# 3. Policy validation (Kyverno)
+kubectl apply -f test-pod.yaml --dry-run=server
+
+# 4. Security scan
+kubesec scan deployment.yaml
+```
+
+---
+
+## 🔐 Security & Compliance
+
+### Security Checklist
+
+**Before submitting PR**:
+
+- [ ] No hardcoded secrets (use AWS Secrets Manager, Vault)
+- [ ] No sensitive data in logs or outputs
+- [ ] All resources encrypted at rest (KMS)
+- [ ] All resources encrypted in transit (TLS 1.2+)
+- [ ] IAM roles follow least-privilege principle
+- [ ] Security groups follow default-deny principle
+- [ ] Container images from approved registries only
+- [ ] No privileged containers (unless Security Pod approved)
+- [ ] All pods have resource limits
+- [ ] NetworkPolicies defined for new namespaces
+
+### Compliance Scanning
+
+```bash
+# Run all compliance checks
+make compliance-check
+
+# Includes:
+# - CIS Kubernetes Benchmark (kube-bench)
+# - PCI-DSS controls
+# - SOC2 requirements
+# - FIPS 140-3 validation
+```
+
+### Secrets Management
+
+**✅ Approved Methods**:
+
+```hcl
+# Terraform: Use AWS Secrets Manager
+data "aws_secretsmanager_secret_version" "api_key" {
+  secret_id = "prod/api/key"
+}
+
+# Kubernetes: Use External Secrets Operator
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: database-credentials
+spec:
+  secretStoreRef:
+    name: vault-backend
+    kind: SecretStore
+  target:
+    name: database-credentials
+  data:
+    - secretKey: password
+      remoteRef:
+        key: database/prod/credentials
+        property: password
+```
+
+**❌ Never Do This**:
+
+```hcl
+# Hardcoded secrets
+variable "api_key" {
+  default = "sk-abc123..."  # CRITICAL SECURITY VIOLATION
+}
+
+# Secrets in Git
+resource "aws_db_instance" "main" {
+  password = "SuperSecret123!"  # CRITICAL SECURITY VIOLATION
+}
+```
+
+---
+
+## 👀 Review Process
+
+### PR Requirements
+
+**All PRs must have**:
+
+1. **Descriptive title** following conventional commits
+2. **Clear description** explaining:
+   - What changed and why
+   - How to test
+   - Any risks or breaking changes
+3. **Linked issue** (Jira ticket or GitHub issue)
+4. **Test evidence** (screenshots, logs, terraform plan output)
+5. **Documentation updates** (if applicable)
+6. **Cost impact** (if infrastructure change)
+
+### Review Checklist
+
+**Reviewers must verify**:
+
+- [ ] Code follows standards (see sections above)
+- [ ] All tests pass (CI/CD pipeline green)
+- [ ] Security scan clean (no HIGH/CRITICAL findings)
+- [ ] Documentation updated
+- [ ] No secrets in code
+- [ ] Resource tagging complete
+- [ ] Tested in non-prod environment
+- [ ] Rollback plan documented (for production changes)
+
+### Approval Requirements
+
+| Change Type | Approvals Required | Auto-Deploy |
+|-------------|-------------------|-------------|
+| **Hotfix** (production issue) | 1 architect | Yes (after approval) |
+| **Feature** (new functionality) | 1 peer + 1 architect | No (manual) |
+| **Refactor** (no functional change) | 1 peer | Yes (nonprod only) |
+| **Documentation** | 1 peer | Yes |
+| **Breaking Change** | 2 architects + VP approval | No (manual) |
+
+---
+
+## 🛠️ Troubleshooting
+
+### Common Issues
+
+#### Terraform State Lock
+
+```bash
+# Error: "Error acquiring the state lock"
+# Solution: Force unlock (use with caution)
+terraform force-unlock <LOCK_ID>
+
+# Prevention: Always use CI/CD pipeline for applies
+```
+
+#### Ansible SSH Connection Failures
+
+```bash
+# Error: "Failed to connect to the host via ssh"
+# Debug:
+ansible all -i inventory/aws_ec2.yml -m ping -vvv
+
+# Common fixes:
+# 1. Check security group allows SSH from runner IP
+# 2. Verify IAM instance profile has SSM permissions
+# 3. Use SSM Session Manager instead:
+ansible_connection: aws_ssm
+```
+
+#### Kubernetes Apply Failures
+
+```bash
+# Error: "The connection to the server was refused"
+# Solution: Update kubeconfig
+aws eks update-kubeconfig --name prod-core-use1 --region us-east-1
+
+# Verify connection
+kubectl cluster-info
+```
+
+### Getting Help
+
+**Internal Support**:
+- Slack: `#ecp-platform-support`
+- Email: ecp-team@leadway-bank.com
+- Office Hours: Tuesdays 2-3 PM EST (Zoom link in Slack channel description)
+
+**External Support**:
+- AWS TAM: For EKS/AWS-specific issues
+- Red Hat CSM: For ROSA/OpenShift issues
+- Vendor documentation: Links in `docs/` directory
+
+---
+
+## 📚 Additional Resources
+
+- [Platform Engineering Handbook](docs/handbook.md)
+- [Disaster Recovery Runbook](docs/runbooks/disaster-recovery.md)
+- [Incident Response Guide](docs/runbooks/incident-response.md)
+- [Architecture Decision Records](docs/architecture/)
+- [Migration Guides](docs/migration-guides/)
+
+---
+
+## 📝 License
+
+Proprietary - Leadway Bank Internal Use Only
+
+© 2025 Leadway Bank. All rights reserved.
+
+---
+
+**Questions?** Open a GitHub issue or ping `@platform-team` in Slack.
+
+**Found a security issue?** Email `security@leadway-bank.com` immediately (do not open public issue).
