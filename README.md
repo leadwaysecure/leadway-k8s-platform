@@ -1,4 +1,4 @@
-cat > README.md << 'EOF'
+
 # Leadway Bank Kubernetes Platform — Fully Open Source
 
 The exact system that ran a **$2 trillion global bank**.
@@ -15,4 +15,4 @@ Built and operated by **Julius Adeniyi** — Ex-Lead Architect, Leadway Bank ECP
 Full 385-page book (free): https://github.com/leadwaysecure/leadway-k8s-book
 
 ⭐ Star this repo if you want to run banking workloads at global scale
-EOF
+
